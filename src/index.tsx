@@ -11,6 +11,7 @@ import {
   styled,
   TableHighlightedRows,
   FlexColumn,
+  Filter
 } from "flipper";
 
 import * as Sentry from "@sentry/react";
@@ -72,6 +73,9 @@ type MessageRow = {
 
 type State = {
   selectedId: string | null;
+  filters: Array<Filter>;
+  messagesPerSecond: number;
+  bandwidthPerSecond: number;
 };
 
 type PersistedState = {
@@ -82,6 +86,8 @@ const Placeholder = styled(FlexCenter)({
   fontSize: 18,
   color: colors.macOSTitleBarIcon,
 });
+
+const HeaderText = styled(FlexCenter)();
 
 function buildRow(row: DataRow | DataRow[]): MessageRow[] {
   if (!(row instanceof Array)) row = [row];
@@ -165,7 +171,12 @@ export default class extends FlipperPlugin<State, any, PersistedState> {
 
   state: State = {
     selectedId: null,
+    filters: [],
+    messagesPerSecond: 0,
+    bandwidthPerSecond: 0
   };
+
+  interval: NodeJS.Timeout | undefined;
 
   static persistedStateReducer = (persistedState: PersistedState, method: string, payload: any): PersistedState => {
     if (method === "newRow") {
@@ -178,11 +189,73 @@ export default class extends FlipperPlugin<State, any, PersistedState> {
     }
     return persistedState;
   };
+
+  getMessagesPerSecond = () => {
+    const filteredSecondMessages = this.filterMessages().length;
+    return Math.ceil(filteredSecondMessages / 5);
+  }
+
+  getBandwidthPerSecond = () => {
+    const filteredSecondMessages = this.filterMessages();
+    return this.getSizeInBytes(filteredSecondMessages) / 5;
+  }
+
+  filterMessages = () => {
+    const filteredSecondMessages = this.props.persistedState.messageRows.filter(
+      (row) => {
+        if (Date.now() - row.timestamp > 5 * 1000) {  
+          return false;
+        }
+
+        if (this.state.filters.length === 0) {
+          return true;
+        }
+
+        for(const filter of this.state.filters){
+          return row.columns[filter.key as keyof typeof columns].value === filter.value
+        }
+      }
+    );
+
+    return filteredSecondMessages;
+  }
+
+  componentDidMount() {
+    this.interval = setInterval(() => {
+      const messagesPerSecond = this.getMessagesPerSecond();
+      const bandwidthPerSecond = this.getBandwidthPerSecond();
+
+      this.setState({
+        messagesPerSecond: messagesPerSecond,
+        bandwidthPerSecond: bandwidthPerSecond
+      })
+    }, 5000);
+  }
+
+  componentWillUnmount() {
+    // Clear the interval right before component unmount
+    if (this.interval) {
+      clearInterval(this.interval);
+    }
+  }
+
   render() {
     const clearTableButton = (
       <Button onClick={this.clear} key="clear">
         Clear Table
       </Button>
+    );
+
+    const mshPerSecText = (
+      <HeaderText>
+        { `${ Math.ceil(this.state.messagesPerSecond / 5) } msg/s` }
+      </HeaderText>
+    );
+
+    const bandwidthPerSecText = (
+      <HeaderText>
+        { this.formatBytes(this.state.bandwidthPerSecond) }
+      </HeaderText>
     );
 
     return (
@@ -195,13 +268,22 @@ export default class extends FlipperPlugin<State, any, PersistedState> {
           columnSizes={columnSizes}
           columns={columns}
           onRowHighlighted={this.onRowHighlighted}
+          onFilterChange={this.onFilterChange}
           rows={this.props.persistedState.messageRows}
           stickyBottom
-          actions={[ clearTableButton]}
+          actions={[ mshPerSecText, bandwidthPerSecText, clearTableButton]}
         />
         <DetailSidebar>{this.renderSidebar()}</DetailSidebar>
       </FlexColumn>
     );
+  }
+
+  onFilterChange = (filters: Array<Filter>) => {
+    this.setState({
+      messagesPerSecond: 0,
+      bandwidthPerSecond: 0,
+      filters
+    })
   }
 
   onRowHighlighted = (keys: TableHighlightedRows) => {
@@ -236,4 +318,26 @@ export default class extends FlipperPlugin<State, any, PersistedState> {
     this.setState({ selectedId: null });
     this.props.setPersistedState({ messageRows: [] });
   };
+
+  getSizeInBytes = (obj: object): number => {
+    let str = null;
+    if (typeof obj === 'string') {
+      str = obj;
+    } else {
+      str = JSON.stringify(obj);
+    }
+    const bytes = new TextEncoder().encode(str).length;
+    return bytes;
+  };
+
+  formatBytes(bytes: number, fractionDigits: number = 2): string {
+    if (bytes <= 0) {
+      return "0 B/s";
+    }
+    fractionDigits = fractionDigits < 0 ? 0 : fractionDigits;
+    const k = 1000;
+    const sizes = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(fractionDigits))} ${sizes[i]}/s`;
+  }
 }
