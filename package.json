@@ -40,6 +40,7 @@
   },
   "dependencies": {
     "@sentry/react": "^5.30.0",
-    "@sentry/tracing": "^5.30.0"
+    "@sentry/tracing": "^5.30.0",
+    "csv": "^6.3.1"
   }
 }

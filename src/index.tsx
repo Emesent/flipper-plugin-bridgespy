@@ -16,6 +16,9 @@ import {
 
 import * as Sentry from "@sentry/react";
 import { Integrations } from "@sentry/tracing";
+import * as fs from "fs";
+import { stringify } from "csv-stringify";
+
 
 Sentry.init({
   dsn: "https://d5f779a2974943bdb3c0aa09cbfcbc2e@o483753.ingest.sentry.io/5577125",
@@ -162,7 +165,10 @@ const columnSizes = {
   args: "flex",
 };
 
-
+const filename = "bridge_spy_logs.csv";
+const writableStream = fs.createWriteStream(filename);
+console.log(`Bridge Spy logs saved to Flipper exec root directory as "${ filename }"`);
+const stringifier = stringify({ header: true, columns: Object.values(columns).map(col => col.value) });
 
 export default class extends FlipperPlugin<State, any, PersistedState> {
   static defaultPersistedState = {
@@ -180,9 +186,23 @@ export default class extends FlipperPlugin<State, any, PersistedState> {
 
   static persistedStateReducer = (persistedState: PersistedState, method: string, payload: any): PersistedState => {
     if (method === "newRow") {
+      const newRows = buildRow(payload);
+      
+      /**
+       * Disabled as duplicate entries are being written to the CSV, causing very large (GBs) files.
+       * This isn't the result of the `persistedStateReducer` or duplicate rows in code. 
+       * There's something wrong with the usage of `stringifier.write` or .pipe. 
+       *  */ 
+      /*
+      for(const row of newRows){
+        stringifier.write(Object.values(row.columns).map(col => col.value));
+      }
+      stringifier.pipe(writableStream);
+      */
+  
       return {
         ...persistedState,
-        messageRows: [...persistedState.messageRows, ...buildRow(payload)].filter(
+        messageRows: [...persistedState.messageRows, ...newRows].filter(
           (row) => Date.now() - row.timestamp < 5 * 60 * 1000,
         ),
       };
@@ -271,7 +291,7 @@ export default class extends FlipperPlugin<State, any, PersistedState> {
           onFilterChange={this.onFilterChange}
           rows={this.props.persistedState.messageRows}
           stickyBottom
-          actions={[ mshPerSecText, bandwidthPerSecText, clearTableButton]}
+          actions={[mshPerSecText, bandwidthPerSecText, clearTableButton]}
         />
         <DetailSidebar>{this.renderSidebar()}</DetailSidebar>
       </FlexColumn>
